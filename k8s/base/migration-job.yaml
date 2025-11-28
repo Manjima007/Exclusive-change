@@ -1,0 +1,51 @@
+# =============================================================================
+# Database Migration Job
+# =============================================================================
+# Kubernetes Job that runs Alembic migrations before deployment
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: exclusive-change-migrate
+  annotations:
+    # Run before deployment (use with ArgoCD or Helm hooks)
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 300  # Clean up after 5 minutes
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      
+      containers:
+        - name: migrate
+          image: exclusive-change:latest
+          command:
+            - alembic
+            - upgrade
+            - head
+          
+          envFrom:
+            - secretRef:
+                name: exclusive-change-secrets
+          
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

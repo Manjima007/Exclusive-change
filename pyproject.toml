@@ -1,0 +1,71 @@
+[project]
+name = "exclusive-change"
+version = "0.1.0"
+description = "Enterprise Feature Flag Service - High-Performance Multi-Tenant SaaS Backend"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Your Team", email = "team@example.com" }]
+
+dependencies = [
+    # Web Framework
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    
+    # Database
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",           # Async PostgreSQL driver
+    "alembic>=1.13.0",           # Migrations
+    
+    # Validation
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",  # For settings management
+    "email-validator>=2.1.0",    # Email validation
+    
+    # Caching
+    "redis>=5.0.0",              # Async Redis client
+    
+    # Authentication
+    "pyjwt>=2.8.0",              # JWT validation
+    "cryptography>=41.0.0",      # For JWT RS256
+    
+    # Utilities
+    "python-dotenv>=1.0.0",      # Environment variables
+    "httpx>=0.25.0",             # Async HTTP client
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

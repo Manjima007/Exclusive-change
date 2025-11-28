@@ -1,0 +1,66 @@
+# =============================================================================
+# Production Environment Overlay
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: exclusive-change
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - secrets.yaml
+  - networkpolicy.yaml
+
+# Production-specific labels
+commonLabels:
+  environment: production
+
+# Production replicas
+replicas:
+  - name: exclusive-change
+    count: 3
+
+# Production-specific config
+configMapGenerator:
+  - name: exclusive-change-config
+    behavior: merge
+    literals:
+      - APP_ENV=production
+      - LOG_LEVEL=WARNING
+      - LOG_FORMAT=json
+
+# Production patches - higher resource limits
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: exclusive-change
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 50
+
+  - target:
+      kind: Deployment
+      name: exclusive-change
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "200m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+
+images:
+  - name: exclusive-change
+    newName: ghcr.io/your-org/exclusive-change
+    newTag: latest

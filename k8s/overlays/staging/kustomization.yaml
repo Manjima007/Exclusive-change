@@ -1,0 +1,74 @@
+# =============================================================================
+# Staging Environment Overlay
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: exclusive-change-staging
+
+namePrefix: staging-
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - secrets.yaml
+
+# Staging-specific labels
+commonLabels:
+  environment: staging
+
+# Override replicas for staging (fewer resources)
+replicas:
+  - name: exclusive-change
+    count: 2
+
+# Staging-specific config
+configMapGenerator:
+  - name: exclusive-change-config
+    behavior: merge
+    literals:
+      - APP_ENV=staging
+      - LOG_LEVEL=DEBUG
+
+# Patch HPA for staging (lower limits)
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: exclusive-change
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+
+  - target:
+      kind: Deployment
+      name: exclusive-change
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "128Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"
+
+  - target:
+      kind: PodDisruptionBudget
+      name: exclusive-change
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 1
+
+images:
+  - name: exclusive-change
+    newName: ghcr.io/your-org/exclusive-change
+    newTag: develop

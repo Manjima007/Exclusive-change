@@ -1,0 +1,53 @@
+# Ignore Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Ignore virtual environments
+venv/
+.venv/
+ENV/
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Ignore environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore docs
+*.md
+!README.md
+docs/
+
+# Ignore CI/CD
+.github/
+
+# Ignore local development
+*.log
+*.sqlite
+.DS_Store
+Thumbs.db
+
+# Ignore Kubernetes local configs
+k8s/overlays/local/

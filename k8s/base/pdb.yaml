@@ -1,0 +1,14 @@
+# =============================================================================
+# Pod Disruption Budget
+# =============================================================================
+# Ensures minimum availability during voluntary disruptions
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: exclusive-change
+spec:
+  minAvailable: 2  # At least 2 pods must be available at all times
+  selector:
+    matchLabels:
+      app: exclusive-change

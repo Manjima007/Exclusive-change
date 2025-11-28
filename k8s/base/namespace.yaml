@@ -1,0 +1,10 @@
+# =============================================================================
+# Namespace
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: exclusive-change
+  labels:
+    name: exclusive-change
+    istio-injection: enabled  # Enable if using Istio service mesh

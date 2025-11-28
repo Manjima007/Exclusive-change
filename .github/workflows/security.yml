@@ -1,0 +1,131 @@
+# =============================================================================
+# Security Scanning Workflow
+# =============================================================================
+# Runs security scans on code, dependencies, and container images
+
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Sundays at midnight
+    - cron: '0 0 * * 0'
+
+jobs:
+  # ===========================================================================
+  # Dependency Vulnerability Scan
+  # ===========================================================================
+  dependency-scan:
+    name: Dependency Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pip-audit safety
+
+      - name: Run pip-audit
+        run: |
+          pip install -e .
+          pip-audit --format=json --output=pip-audit-results.json || true
+          cat pip-audit-results.json
+
+      - name: Run Safety check
+        run: |
+          pip freeze | safety check --stdin --json > safety-results.json || true
+          cat safety-results.json
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-scan-results
+          path: |
+            pip-audit-results.json
+            safety-results.json
+
+  # ===========================================================================
+  # Static Code Analysis
+  # ===========================================================================
+  code-scan:
+    name: Code Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Bandit security linter
+        run: |
+          pip install bandit
+          bandit -r app/ -f json -o bandit-results.json || true
+          bandit -r app/ -f txt
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/python
+          generateSarif: true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+        if: always()
+
+  # ===========================================================================
+  # Container Image Scan
+  # ===========================================================================
+  container-scan:
+    name: Container Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: |
+          docker build -t exclusive-change:scan .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'exclusive-change:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ===========================================================================
+  # Secret Scanning
+  # ===========================================================================
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

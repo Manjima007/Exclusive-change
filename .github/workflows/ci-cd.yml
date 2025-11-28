@@ -1,0 +1,257 @@
+# =============================================================================
+# Exclusive-Change CI/CD Pipeline
+# =============================================================================
+# This workflow handles:
+#   - Linting and type checking
+#   - Unit and integration tests
+#   - Docker image build and push
+#   - Kubernetes deployment
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ===========================================================================
+  # Job 1: Code Quality & Tests
+  # ===========================================================================
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    
+    services:
+      # PostgreSQL for integration tests
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      # Redis for integration tests
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run Ruff linter
+        run: |
+          pip install ruff
+          ruff check app/ tests/ --output-format=github
+
+      - name: Run type checking with mypy
+        run: |
+          pip install mypy types-redis
+          mypy app/ --ignore-missing-imports --no-error-summary || true
+
+      - name: Run tests with coverage
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+          APP_ENV: testing
+          SUPABASE_JWT_SECRET: test-secret-key-for-testing-only-min-32-chars
+          SUPABASE_URL: https://test.supabase.co
+          SUPABASE_ANON_KEY: test-anon-key
+        run: |
+          pip install pytest pytest-asyncio pytest-cov
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ===========================================================================
+  # Job 2: Build & Push Docker Image
+  # ===========================================================================
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  # ===========================================================================
+  # Job 3: Deploy to Staging (develop branch)
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+
+      - name: Deploy to Staging
+        run: |
+          # Update image tag in kustomization
+          cd k8s/overlays/staging
+          kustomize edit set image exclusive-change=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build.outputs.image_digest }}
+          
+          # Apply the manifests
+          kubectl apply -k .
+          
+          # Wait for rollout
+          kubectl rollout status deployment/exclusive-change -n exclusive-change-staging --timeout=300s
+
+      - name: Run smoke tests
+        run: |
+          # Wait for service to be ready
+          sleep 30
+          
+          # Get the staging URL from ingress
+          STAGING_URL=$(kubectl get ingress -n exclusive-change-staging -o jsonpath='{.items[0].spec.rules[0].host}')
+          
+          # Health check
+          curl -f "https://${STAGING_URL}/health" || exit 1
+          echo "Staging deployment successful!"
+
+  # ===========================================================================
+  # Job 4: Deploy to Production (main branch)
+  # ===========================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > $HOME/.kube/config
+
+      - name: Deploy to Production
+        run: |
+          # Update image tag in kustomization
+          cd k8s/overlays/production
+          kustomize edit set image exclusive-change=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build.outputs.image_digest }}
+          
+          # Apply the manifests
+          kubectl apply -k .
+          
+          # Wait for rollout
+          kubectl rollout status deployment/exclusive-change -n exclusive-change --timeout=300s
+
+      - name: Run smoke tests
+        run: |
+          sleep 30
+          PROD_URL=$(kubectl get ingress -n exclusive-change -o jsonpath='{.items[0].spec.rules[0].host}')
+          curl -f "https://${PROD_URL}/health" || exit 1
+          echo "Production deployment successful!"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🚀 Production deployment completed successfully!"
+          # Add Slack/Discord notification here if needed
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed, initiating rollback..."
+          kubectl rollout undo deployment/exclusive-change -n exclusive-change
+          kubectl rollout status deployment/exclusive-change -n exclusive-change --timeout=300s
